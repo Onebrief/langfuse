@@ -1,0 +1,25 @@
+name: Docker AIService
+on:
+  workflow_call: {}
+  workflow_dispatch: {}
+  release:
+    types:
+      - released
+jobs:
+  docker-web:
+    name: Docker
+    uses: Onebrief/actions/.github/workflows/reusable-docker-build.yml@v3.0.4
+    secrets: inherit
+    with:
+      repository: onebrief/langfuse-ob
+      dockerfile: web/Dockerfile
+      anchore: true
+
+  docker-worker:
+    name: Docker
+    uses: Onebrief/actions/.github/workflows/reusable-docker-build.yml@v3.0.4
+    secrets: inherit
+    with:
+      repository: onebrief/langfuse-ob
+      dockerfile: worker/Dockerfile
+      anchore: true
