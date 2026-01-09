@@ -7,19 +7,19 @@ on:
       - released
 jobs:
   docker-web:
-    name: Docker
-    uses: Onebrief/actions/.github/workflows/reusable-docker-build.yml@v3.0.4
+    name: Docker Web
+    uses: ./.github/workflows/reusable-docker-build.yml
     secrets: inherit
     with:
       repository: onebrief/langfuse-ob
       dockerfile: web/Dockerfile
-      anchore: true
+      context: web
 
   docker-worker:
-    name: Docker
-    uses: Onebrief/actions/.github/workflows/reusable-docker-build.yml@v3.0.4
+    name: Docker Worker  
+    uses: ./.github/workflows/reusable-docker-build.yml
     secrets: inherit
     with:
       repository: onebrief/langfuse-ob
       dockerfile: worker/Dockerfile
-      anchore: true
+      context: worker
