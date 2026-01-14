@@ -88,21 +88,12 @@ jobs:
           role-to-assume: ${{ inputs.role-arn }}
           aws-region: us-west-2
           role-skip-session-tagging: true
-      - name: Load Nexus Secret
-        id: load_secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
-        with:
-          export-env: true
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.ONEPASS_SA_TOKEN }}
-          NEXUS_USER: op://Github Secrets/Nexus Write Service Account/username
-          NEXUS_PASS: op://Github Secrets/Nexus Write Service Account/password
       - name: Login to nexus container registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: nexus.int.onebrief.tools
-          username: ${{ env.NEXUS_USER }}
-          password: ${{ env.NEXUS_PASS }}
+          username: ${{ vars.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASS }}
       - name: Login to container registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
