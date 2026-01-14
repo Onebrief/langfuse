@@ -5,7 +5,7 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} node:24-alpine AS alpine
 RUN apk update && apk upgrade --no-cache libcrypto3 libssl3 libc6-compat busybox ssl_client
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine AS base
-RUN npm install turbo@^2.6.3 --global
+RUN npm install turbo@2.6.3 --global
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
@@ -139,7 +139,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/prisma ./packages
 COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/clickhouse ./packages/shared/clickhouse
 COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
 
-COPY --chown=nextjs:nodejs ./web/entrypoint.sh ./web/entrypoint.sh
+COPY --from=builder --chown=nextjs:nodejs /app/web/entrypoint.sh ./web/entrypoint.sh
 RUN chmod +x ./web/entrypoint.sh
 
 USER nextjs
