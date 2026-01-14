@@ -66,7 +66,6 @@ RUN addgroup --system --gid ${GID} expressjs
 RUN adduser --system --uid ${UID} expressjs
 USER expressjs
 COPY --from=builder --chown=expressjs:expressjs /app .
-COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
 RUN chmod +x ./worker/entrypoint.sh
 
 EXPOSE 3030
