@@ -145,12 +145,14 @@ jobs:
         shell: bash
         env:
           REPONAME: ${{ inputs.repository }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
           META_JSON: ${{ steps.meta.outputs.json }}
         run: |
           echo "image=$(echo "$META_JSON" | jq -r '.tags[0]')" >> $GITHUB_OUTPUT
           echo "version=$(echo "$META_JSON" | jq -r '.labels["org.opencontainers.image.version"]')" >> $GITHUB_OUTPUT
           echo "date=$(echo "$META_JSON" | jq -r '.labels["org.opencontainers.image.created"]')" >> $GITHUB_OUTPUT
-          echo "digestname=${REPONAME/\//-}" >> $GITHUB_OUTPUT
+          DOCKERFILE_NAME=$(basename "${DOCKERFILE%/*}")
+          echo "digestname=${REPONAME/\//-}-${DOCKERFILE_NAME}" >> $GITHUB_OUTPUT
       - name: Export digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -195,8 +197,10 @@ jobs:
         shell: bash
         env:
           REPONAME: ${{ inputs.repository }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
         run: |
-          echo "digestname=${REPONAME/\//-}" >> $GITHUB_OUTPUT
+          DOCKERFILE_NAME=$(basename "${DOCKERFILE%/*}")
+          echo "digestname=${REPONAME/\//-}-${DOCKERFILE_NAME}" >> $GITHUB_OUTPUT
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 #v4.3.0
         with:
