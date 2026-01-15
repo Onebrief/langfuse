@@ -77,18 +77,16 @@ type ObservationsTableQueryResultWitouhtTraceFields = Omit<
  * @param requestedFields - Field groups for V2 API (null = V1 API, returns complete observations)
  */
 async function enrichObservationsWithModelData(
-  // eslint-disable-next-line no-unused-vars
   observationRecords: Array<ObservationsTableQueryResultWitouhtTraceFields>,
-  projectId: string, // eslint-disable-line no-unused-vars
-  parseIoAsJson: boolean, // eslint-disable-line no-unused-vars
-  requestedFields: ObservationFieldGroup[], // eslint-disable-line no-unused-vars
+  projectId: string,
+  parseIoAsJson: boolean,
+  requestedFields: ObservationFieldGroup[],
 ): Promise<Array<EventsObservationPublic>>;
 async function enrichObservationsWithModelData(
-  // eslint-disable-next-line no-unused-vars
   observationRecords: Array<ObservationsTableQueryResultWitouhtTraceFields>,
-  projectId: string, // eslint-disable-line no-unused-vars
-  parseIoAsJson: boolean, // eslint-disable-line no-unused-vars
-  requestedFields: null, // eslint-disable-line no-unused-vars
+  projectId: string,
+  parseIoAsJson: boolean,
+  requestedFields: null,
 ): Promise<Array<EventsObservation & ObservationPriceFields>>;
 async function enrichObservationsWithModelData(
   observationRecords: Array<ObservationsTableQueryResultWitouhtTraceFields>,
@@ -186,6 +184,13 @@ async function enrichObservationsWithTraceFields(
       traceName: o.name ?? null,
       traceTags: [], // TODO pull from PG
       traceTimestamp: null,
+      toolDefinitions: o.toolDefinitions ?? null,
+      toolCalls: o.toolCalls ?? null,
+      // Compute counts from actual data for events table
+      toolDefinitionsCount: o.toolDefinitions
+        ? Object.keys(o.toolDefinitions).length
+        : null,
+      toolCallsCount: o.toolCalls ? o.toolCalls.length : null,
     };
   });
 }
@@ -697,6 +702,12 @@ type PublicApiObservationsQuery = {
     lastId: string;
   };
   fields?: ObservationFieldGroup[] | null;
+  /**
+   * Metadata keys to expand (return full non-truncated values).
+   * - null/undefined: use truncated metadata (default behavior)
+   * - string[]: expand specified keys (or all keys if empty array)
+   */
+  expandMetadataKeys?: string[] | null;
 };
 
 function buildObservationsQueryBase(
@@ -898,7 +909,7 @@ export const getObservationsFromEventsTableForPublicApi = async (
 export const getObservationsV2FromEventsTableForPublicApi = async (
   opts: PublicApiObservationsQuery & { fields: ObservationFieldGroup[] },
 ): Promise<Array<EventsObservationPublic>> => {
-  const { projectId } = opts;
+  const { projectId, expandMetadataKeys } = opts;
 
   // Build query with filters and common CTEs
   let queryBuilder = buildObservationsQueryBase(
@@ -919,6 +930,14 @@ export const getObservationsV2FromEventsTableForPublicApi = async (
     .forEach((fieldGroup) => {
       queryBuilder.selectFieldSet(fieldGroup);
     });
+
+  // Handle metadata field with optional expansion
+  if (requestedFields.includes("metadata")) {
+    if (expandMetadataKeys && expandMetadataKeys.length > 0) {
+      // Use expanded metadata (coalesces truncated values with full values)
+      queryBuilder.selectMetadataExpanded(expandMetadataKeys);
+    }
+  }
 
   queryBuilder = applyCursorPagination(
     opts,
@@ -1187,7 +1206,6 @@ export const getTracesCountFromEventsTableForPublicApi = async (
 const updateableEventKeys = ["bookmarked", "public"] as const;
 
 type UpdateableEventFields = {
-  // eslint-disable-next-line no-unused-vars
   [K in (typeof updateableEventKeys)[number]]?: boolean;
 };
 
@@ -1663,27 +1681,6 @@ export const deleteEventsByTraceIds = async (
   await commandClickhouse({
     query,
     params: { projectId, traceIds },
-    tags: {
-      feature: "tracing",
-      type: "events",
-      kind: "delete",
-      projectId,
-    },
-  });
-};
-
-/**
- * Delete all events for a project
- * Used when an entire project is deleted
- */
-export const deleteEventsByProjectId = async (projectId: string) => {
-  const query = `
-    DELETE FROM events
-    WHERE project_id = {projectId: String};
-  `;
-  await commandClickhouse({
-    query,
-    params: { projectId },
     clickhouseConfigs: {
       request_timeout: env.LANGFUSE_CLICKHOUSE_DELETION_TIMEOUT_MS,
     },
@@ -1696,6 +1693,95 @@ export const deleteEventsByProjectId = async (projectId: string) => {
   });
 };
 
+export const hasAnyEvent = async (projectId: string) => {
+  const query = `
+    SELECT 1
+    FROM events
+    WHERE project_id = {projectId: String}
+    LIMIT 1
+  `;
+
+  const rows = await queryClickhouse<{ 1: number }>({
+    query,
+    params: { projectId },
+    tags: {
+      feature: "tracing",
+      type: "events",
+      kind: "hasAny",
+      projectId,
+    },
+  });
+
+  return rows.length > 0;
+};
+
+/**
+ * Delete all events for a project
+ * Used when an entire project is deleted
+ */
+export const deleteEventsByProjectId = async (
+  projectId: string,
+): Promise<boolean> => {
+  const hasData = await hasAnyEvent(projectId);
+  if (!hasData) {
+    return false;
+  }
+
+  const query = `
+    DELETE FROM events
+    WHERE project_id = {projectId: String};
+  `;
+  const tags = {
+    feature: "tracing",
+    type: "events",
+    kind: "delete",
+    projectId,
+  };
+
+  await commandClickhouse({
+    query,
+    params: { projectId },
+    clickhouseConfigs: {
+      request_timeout: env.LANGFUSE_CLICKHOUSE_DELETION_TIMEOUT_MS,
+    },
+    tags,
+    clickhouseSettings: {
+      send_logs_level: "trace",
+    },
+  });
+
+  return true;
+};
+
+export const hasAnyEventOlderThan = async (
+  projectId: string,
+  beforeDate: Date,
+) => {
+  const query = `
+    SELECT 1
+    FROM events
+    WHERE project_id = {projectId: String}
+    AND start_time < {cutoffDate: DateTime64(3)}
+    LIMIT 1
+  `;
+
+  const rows = await queryClickhouse<{ 1: number }>({
+    query,
+    params: {
+      projectId,
+      cutoffDate: convertDateToClickhouseDateTime(beforeDate),
+    },
+    tags: {
+      feature: "tracing",
+      type: "events",
+      kind: "hasAnyOlderThan",
+      projectId,
+    },
+  });
+
+  return rows.length > 0;
+};
+
 /**
  * Delete events older than a cutoff date
  * Used for data retention cleanup
@@ -1703,7 +1789,12 @@ export const deleteEventsByProjectId = async (projectId: string) => {
 export const deleteEventsOlderThanDays = async (
   projectId: string,
   beforeDate: Date,
-) => {
+): Promise<boolean> => {
+  const hasData = await hasAnyEventOlderThan(projectId, beforeDate);
+  if (!hasData) {
+    return false;
+  }
+
   const query = `
     DELETE FROM events
     WHERE project_id = {projectId: String}
@@ -1725,6 +1816,8 @@ export const deleteEventsOlderThanDays = async (
       projectId,
     },
   });
+
+  return true;
 };
 
 export const getObservationsBatchIOFromEventsTable = async (opts: {
@@ -1732,8 +1825,9 @@ export const getObservationsBatchIOFromEventsTable = async (opts: {
   observations: Array<{
     id: string;
     traceId: string;
-    startTime: Date;
   }>;
+  minStartTime: Date;
+  maxStartTime: Date;
 }): Promise<
   Array<Pick<Observation, "id" | "input" | "output" | "metadata">>
 > => {
@@ -1745,10 +1839,9 @@ export const getObservationsBatchIOFromEventsTable = async (opts: {
   const observationIds = opts.observations.map((o) => o.id);
   const traceIds = [...new Set(opts.observations.map((o) => o.traceId))];
 
-  // Calculate timestamp range with buffer for efficient filtering
-  const timestamps = opts.observations.map((o) => o.startTime.getTime());
-  const minTimestamp = new Date(Math.min(...timestamps) - 1000); // -1 second buffer
-  const maxTimestamp = new Date(Math.max(...timestamps) + 1000); // +1 second buffer
+  // Use provided timestamp range with buffer for efficient filtering
+  const minTimestamp = new Date(opts.minStartTime.getTime() - 1000); // -1 second buffer
+  const maxTimestamp = new Date(opts.maxStartTime.getTime() + 1000); // +1 second buffer
 
   const query = `
     SELECT
