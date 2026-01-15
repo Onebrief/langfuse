@@ -5,7 +5,7 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} node:24-alpine AS alpine
 RUN apk update && apk upgrade --no-cache libcrypto3 libssl3 libc6-compat busybox ssl_client
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine AS base
-RUN npm install turbo@^2.6.3 --global
+RUN npm install turbo@2.6.3 --global
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
@@ -66,7 +66,6 @@ RUN addgroup --system --gid ${GID} expressjs
 RUN adduser --system --uid ${UID} expressjs
 USER expressjs
 COPY --from=builder --chown=expressjs:expressjs /app .
-COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
 RUN chmod +x ./worker/entrypoint.sh
 
 EXPOSE 3030

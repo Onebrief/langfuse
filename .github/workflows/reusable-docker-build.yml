@@ -1,0 +1,322 @@
+name: Build request Docker image
+on:
+  workflow_call:
+    inputs:
+      build_args:
+        required: false
+        type: string
+        default: ""
+        description: "Extra arguments to be passed in during build time"
+      repository:
+        required: true
+        type: string
+        description: The repository on the registry where the image should reside.
+      dockerfile:
+        required: true
+        type: string
+        description: The dockerfile to use for the build.
+      context:
+        required: false
+        type: string
+        default: "."
+        description: The location we should be to build a dockerfile.
+      clear-tools:
+        default: false
+        type: boolean
+        description: Clear Github workflow tools from disk to free up space for large image builds.
+      role-arn:
+        required: false
+        default: "arn:aws:iam::183613197217:role/reusable-docker-build"
+        type: string
+        description: The ARN of the IAM role to assume for reusable-docker-build.
+      platforms:
+        required: false
+        type: string
+        default: '[{"arch":"amd64","runner":"stepsecurity-x64"},{"arch":"arm64","runner":"stepsecurity-arm64"}]'
+        description: "Platform matrix. Default builds both amd64 and arm64."
+    outputs:
+      date:
+        description: The date the image was built
+        value: ${{ jobs.merge.outputs.date }}
+      digest:
+        description: The digest of the image
+        value: ${{ jobs.merge.outputs.digest }}
+      image:
+        description: The full image repository & tag
+        value: ${{ jobs.merge.outputs.image }}
+      version:
+        description: The image tag
+        value: ${{ jobs.merge.outputs.version }}
+      pinned-version:
+        description: The image tag & digest
+        value: ${{ jobs.merge.outputs.pinned-version }}
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  security-events: write
+  id-token: write
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.platforms) }}
+    runs-on: runs-on=${{ github.run_id}}/pool=${{ matrix.runner }}
+    steps:
+      - uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e #v2
+      - uses: runs-on/snapshot@5bed1310e233944a031ed6a6e66f860dae4c0001 # v1
+        with:
+          path: /var/lib/docker
+          volume_size: 128
+          volume_initialization_rate: 300
+      - name: clear old images
+        run: docker image prune -f
+      - name: Harden Runner
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: us-west-2
+          role-skip-session-tagging: true
+      - name: Login to nexus container registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: nexus.int.onebrief.tools
+          username: ${{ vars.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASS }}
+      - name: Login to container registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: harbor.onebrief.tools
+          username: ${{ vars.HARBOR_USER }}
+          password: ${{ secrets.HARBOR_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          name: runs-on
+          keep-state: true
+      - name: Free up space TEMP
+        if: inputs.clear-tools
+        run: |
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      - name: Docker Metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: |
+            harbor.onebrief.tools/${{ inputs.repository }}
+            nexus.int.onebrief.tools/${{ inputs.repository }}
+      - name: Build and push docker image by digest
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          push: true
+          no-cache: true
+          platforms: linux/${{ matrix.arch }}
+          file: ${{ inputs.dockerfile }}
+          context: ${{ inputs.context }}
+          outputs: |
+            type=image,name=nexus.int.onebrief.tools/${{ inputs.repository }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            ${{ inputs.build_args }}
+          secrets: |
+            turbo-token=${{ secrets.TURBO_TOKEN }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            onebrief.created=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            onebrief.version=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+            onebrief.git.sha=${{ github.sha }}
+      # This shouldn't be needed, but I couldn't get the below scripts to work in the `value:` fields of the `output:`
+      - name: Set outputs
+        id: setout
+        shell: bash
+        env:
+          REPONAME: ${{ inputs.repository }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          META_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          echo "image=$(echo "$META_JSON" | jq -r '.tags[0]')" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$META_JSON" | jq -r '.labels["org.opencontainers.image.version"]')" >> $GITHUB_OUTPUT
+          echo "date=$(echo "$META_JSON" | jq -r '.labels["org.opencontainers.image.created"]')" >> $GITHUB_OUTPUT
+          DOCKERFILE_NAME=$(basename "${DOCKERFILE%/*}")
+          echo "digestname=${REPONAME/\//-}-${DOCKERFILE_NAME}" >> $GITHUB_OUTPUT
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          echo "Exporting digest: $DIGEST"
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 #v4.6.2
+        with:
+          name: digests-${{ steps.setout.outputs.digestname }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+  merge:
+    name: Merge
+    permissions:
+      contents: read
+      id-token: write
+    runs-on:
+      - runs-on=${{github.run_id}}=check
+      - pool=stepsecurity-x64
+      - extras=s3-cache
+    needs:
+      - build
+    outputs:
+      image: ${{ steps.setout.outputs.image }}
+      digest: ${{ steps.setout.outputs.digest }}
+      version: ${{ steps.setout.outputs.version }}
+      date: ${{ steps.setout.outputs.date }}
+      pinned-version: ${{ steps.setout.outputs.version }}@${{ steps.setout.outputs.digest }}
+    steps:
+      - uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e #v2
+      - name: Harden Runner
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Set outputs
+        id: calculate
+        shell: bash
+        env:
+          REPONAME: ${{ inputs.repository }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          DOCKERFILE_NAME=$(basename "${DOCKERFILE%/*}")
+          echo "digestname=${REPONAME/\//-}-${DOCKERFILE_NAME}" >> $GITHUB_OUTPUT
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 #v4.3.0
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ steps.calculate.outputs.digestname }}-*
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Login to nexus container registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: nexus.int.onebrief.tools
+          username: ${{ vars.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASS }}
+      - name: Login to container registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: harbor.onebrief.tools
+          username: ${{ vars.HARBOR_USER }}
+          password: ${{ secrets.HARBOR_TOKEN }}
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: |
+            nexus.int.onebrief.tools/${{ inputs.repository }}
+            harbor.onebrief.tools/${{ inputs.repository }}
+      - name: Create manifest list and push to Nexus
+        working-directory: /tmp/digests
+        shell: bash
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map(select(startswith("nexus.int.onebrief.tools/"))) | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "nexus.int.onebrief.tools/${REPOSITORY}@sha256:%s " *)
+      - name: Copy Nexus manifest to Harbor
+        shell: bash
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map(select(startswith("harbor.onebrief.tools/"))) | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            nexus.int.onebrief.tools/${REPOSITORY}:${VERSION}
+      - name: Inspect harbor image
+        id: setout
+        shell: bash
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          META_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          docker buildx imagetools inspect "harbor.onebrief.tools/${REPOSITORY}:${VERSION}"
+          HARBOR_DIGEST=$(docker buildx imagetools inspect "harbor.onebrief.tools/${REPOSITORY}:${VERSION}" --format "{{json .Manifest}}" | jq -r .digest)
+
+          docker buildx imagetools inspect "nexus.int.onebrief.tools/${REPOSITORY}:${VERSION}"
+          NEXUS_DIGEST=$(docker buildx imagetools inspect "nexus.int.onebrief.tools/${REPOSITORY}:${VERSION}" --format "{{json .Manifest}}" | jq -r .digest)
+
+          echo "image=$(echo "$META_JSON" | jq -r '.tags[0]')" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$META_JSON" | jq -r '.labels["org.opencontainers.image.version"]')" >> $GITHUB_OUTPUT
+          echo "date=$(echo "$META_JSON" | jq -r '.labels["org.opencontainers.image.created"]')" >> $GITHUB_OUTPUT
+          echo "digest=${NEXUS_DIGEST}" >> $GITHUB_OUTPUT
+          echo "harbor-digest=${HARBOR_DIGEST}" >> $GITHUB_OUTPUT
+          echo "nexus-digest=${NEXUS_DIGEST}" >> $GITHUB_OUTPUT
+      - name: Configure AWS credentials for cosign
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: us-east-2
+          role-skip-session-tagging: true
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad #v4.0.0
+        with:
+          cosign-release: "v3.0.3"
+      - name: Sign image
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          HARBOR_DIGEST: ${{ steps.setout.outputs.harbor-digest }}
+          NEXUS_DIGEST: ${{ steps.setout.outputs.nexus-digest }}
+        shell: bash
+        run: |
+          cosign version
+          echo "Harbor Digest: $HARBOR_DIGEST"
+          echo "Nexus Digest: $NEXUS_DIGEST"
+          if ! cosign verify \
+            --key awskms:///alias/Image-signing-key \
+            --insecure-ignore-tlog=true \
+            harbor.onebrief.tools/${REPOSITORY}@${HARBOR_DIGEST} >/dev/null 2>&1; then
+
+            cosign sign \
+              --yes \
+              --recursive \
+              --annotations='signed=onebrief' \
+              --key awskms:///alias/Image-signing-key \
+              --signing-config .github/signing-config.no-tlog.json \
+              harbor.onebrief.tools/${REPOSITORY}@${HARBOR_DIGEST}
+
+          else
+            echo "::notice::Harbor image already signed"
+          fi
+
+          if ! cosign verify \
+            --key awskms:///alias/Image-signing-key \
+            --insecure-ignore-tlog=true \
+            nexus.int.onebrief.tools/${REPOSITORY}@${NEXUS_DIGEST} >/dev/null 2>&1; then
+
+            cosign sign \
+              --yes \
+              --recursive \
+              --annotations=signed=onebrief \
+              --signing-config .github/signing-config.no-tlog.json \
+              --key awskms:///alias/Image-signing-key \
+              nexus.int.onebrief.tools/${REPOSITORY}@${NEXUS_DIGEST}
+
+          else
+            echo "::notice::Nexus Image already signed"
+          fi
