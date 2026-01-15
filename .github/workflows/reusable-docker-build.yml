@@ -276,13 +276,6 @@ jobs:
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad #v4.0.0
         with:
           cosign-release: "v3.0.3"
-      - name: Check out actions repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          repository: Onebrief/actions
-          ref: main
-          path: onebrief-actions
-          ssh-key: ${{ secrets.ONEBRIEF_ACTIONS_DEPLOY_KEY }}
       - name: Sign image
         env:
           REPOSITORY: ${{ inputs.repository }}
@@ -304,7 +297,7 @@ jobs:
               --recursive \
               --annotations='signed=onebrief' \
               --key awskms:///alias/Image-signing-key \
-              --signing-config onebrief-actions/.github/signing-config.no-tlog.json \
+              --signing-config .github/signing-config.no-tlog.json \
               harbor.onebrief.tools/${REPOSITORY}@${HARBOR_DIGEST}
 
           else
@@ -320,7 +313,7 @@ jobs:
               --yes \
               --recursive \
               --annotations=signed=onebrief \
-              --signing-config onebrief-actions/.github/signing-config.no-tlog.json \
+              --signing-config .github/signing-config.no-tlog.json \
               --key awskms:///alias/Image-signing-key \
               nexus.int.onebrief.tools/${REPOSITORY}@${NEXUS_DIGEST}
 
