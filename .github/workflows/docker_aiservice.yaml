@@ -13,7 +13,7 @@ jobs:
     with:
       repository: onebrief/langfuse-ob
       dockerfile: web/Dockerfile
-      context: web
+      context: .
 
   docker-worker:
     name: Docker Worker  
@@ -22,4 +22,4 @@ jobs:
     with:
       repository: onebrief/langfuse-ob
       dockerfile: worker/Dockerfile
-      context: worker
+      context: .
