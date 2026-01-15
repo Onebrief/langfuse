@@ -11,7 +11,7 @@ jobs:
     uses: ./.github/workflows/reusable-docker-build.yml
     secrets: inherit
     with:
-      repository: onebrief/langfuse-ob
+      repository: onebrief/langfuse-ob-web
       dockerfile: web/Dockerfile
       context: .
 
@@ -20,6 +20,6 @@ jobs:
     uses: ./.github/workflows/reusable-docker-build.yml
     secrets: inherit
     with:
-      repository: onebrief/langfuse-ob
+      repository: onebrief/langfuse-ob-worker
       dockerfile: worker/Dockerfile
       context: .
