@@ -17,6 +17,7 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS pruner
 WORKDIR /app
 
 COPY . .
+RUN cat package.json | grep -A1 -B1 packageManager || echo "packageManager NOT FOUND"
 RUN turbo prune --scope=worker --docker
 
 
