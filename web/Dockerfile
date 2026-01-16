@@ -1,5 +1,5 @@
 # The node alpine image is available here: https://github.com/nodejs/docker-node
-FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24 AS alpine
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24-dev AS alpine
 
 # It's important to update the index before installing packages to ensure you're getting the latest versions.
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
@@ -87,7 +87,7 @@ ENV CI true
 RUN NODE_OPTIONS='--max-old-space-size-percentage=75' turbo run build --filter=web...
 
 # Production image, copy all the files and run next
-FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS runner
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24 AS runner
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -107,7 +107,8 @@ ENV DOCKER_BUILD 0
 # Set NEXT_MANUAL_SIG_HANDLE for runtime
 ENV NEXT_MANUAL_SIG_HANDLE true
 
-RUN apk add --no-cache dumb-init tzdata
+COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
+COPY --from=alpine /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Don't run production as root
 ARG UID=1001
@@ -138,9 +139,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/web/public ./web/public
 
 COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/prisma ./packages/shared/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/clickhouse ./packages/shared/clickhouse
-COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
 
-COPY --from=builder --chown=nextjs:nodejs /app/web/entrypoint.sh ./web/entrypoint.sh
+COPY --chown=nextjs:nodejs ./web/entrypoint.sh ./web/entrypoint.sh
+COPY --chown=nextjs:nodejs ./packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
 RUN chmod +x ./web/entrypoint.sh
 
 USER nextjs

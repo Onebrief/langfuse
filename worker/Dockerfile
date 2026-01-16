@@ -1,5 +1,5 @@
 # The node alpine image is available here: https://github.com/nodejs/docker-node
-FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24 AS alpine
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24-dev AS alpine
 
 # It's important to update the index before installing packages to ensure you're getting the latest versions.
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
@@ -45,12 +45,12 @@ COPY --from=pruner /app/out/full/ .
 
 RUN turbo run build --filter=worker...
 
-FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS runner
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24 AS runner
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
-RUN apk add --no-cache dumb-init
+COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
 
 WORKDIR /app
 
@@ -67,6 +67,7 @@ RUN addgroup --system --gid ${GID} expressjs
 RUN adduser --system --uid ${UID} expressjs
 USER expressjs
 COPY --from=builder --chown=expressjs:expressjs /app .
+COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
 RUN chmod +x ./worker/entrypoint.sh
 
 EXPOSE 3030
