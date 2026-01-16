@@ -24,11 +24,15 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS builder
 
 WORKDIR /app
 
+# Disable FIPS mode for build (pnpm uses non-FIPS-compliant hashes internally)
+ENV OPENSSL_CONF=""
+
 # First install the dependencies (as they change less often)
 COPY --from=pruner /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=pruner /app/out/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=pruner /app/out/json/ .
 
+USER root
 RUN pnpm install --frozen-lockfile
 
 ENV DOCKER_BUILD 1

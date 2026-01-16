@@ -55,6 +55,8 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
+USER root
+
 COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
 
 WORKDIR /app
@@ -65,9 +67,10 @@ ENV BUILD_ID=$NEXT_PUBLIC_BUILD_ID
 ENV NODE_ENV production
 ENV DOCKER_BUILD 0
 
-COPY --from=builder --chown=expressjs:expressjs /app .
-COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
-RUN chmod +x ./worker/entrypoint.sh
+COPY --from=builder /app .
+RUN chmod +x ./worker/entrypoint.sh && chown -R node:node /app
+
+USER node
 
 EXPOSE 3030
 ENV PORT=3030
