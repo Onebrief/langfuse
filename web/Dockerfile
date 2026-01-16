@@ -97,6 +97,8 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
+USER root
+
 WORKDIR /app
 
 ARG NEXT_PUBLIC_BUILD_ID
@@ -127,21 +129,23 @@ RUN MIGRATE_TARGET_ARCH=$(echo ${TARGETPLATFORM:-linux/amd64} | sed 's/\//-/g') 
     wget -q -O- https://github.com/golang-migrate/migrate/releases/download/v4.19.1/migrate.$MIGRATE_TARGET_ARCH.tar.gz | tar xvz && \
     mv migrate /usr/bin/migrate
 
-COPY --from=builder --chown=nextjs:nodejs /app/web/next.config.mjs .
-COPY --from=builder --chown=nextjs:nodejs /app/web/package.json .
+COPY --from=builder /app/web/next.config.mjs .
+COPY --from=builder /app/web/package.json .
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder --chown=nextjs:nodejs /app/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./web/.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/web/public ./web/public
+COPY --from=builder /app/web/.next/standalone ./
+COPY --from=builder /app/web/.next/static ./web/.next/static
+COPY --from=builder /app/web/public ./web/public
 
-COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/prisma ./packages/shared/prisma
-COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/clickhouse ./packages/shared/clickhouse
+COPY --from=builder /app/packages/shared/prisma ./packages/shared/prisma
+COPY --from=builder /app/packages/shared/clickhouse ./packages/shared/clickhouse
+COPY --from=builder /app/packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
 
-COPY --chown=nextjs:nodejs ./web/entrypoint.sh ./web/entrypoint.sh
-COPY --chown=nextjs:nodejs ./packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
-RUN chmod +x ./web/entrypoint.sh
+COPY --from=builder /app/web/entrypoint.sh ./web/entrypoint.sh
+RUN chmod +x ./web/entrypoint.sh && chown -R node:node /app
+
+USER node
 
 # Default port to 3000
 ENV PORT 3000
