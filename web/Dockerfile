@@ -108,13 +108,7 @@ ENV DOCKER_BUILD 0
 ENV NEXT_MANUAL_SIG_HANDLE true
 
 COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
-COPY --from=alpine /usr/share/zoneinfo /usr/share/zoneinfo
-
-# Don't run production as root
-ARG UID=1001
-ARG GID=1001
-RUN addgroup --system --gid ${GID} nodejs
-RUN adduser --system --uid ${UID} nextjs
+# COPY --from=alpine /usr/share/zoneinfo /usr/share/zoneinfo
 
 RUN npm install -g --no-package-lock --no-save prisma@6.17.1
 
@@ -143,8 +137,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/clickhouse ./pack
 COPY --chown=nextjs:nodejs ./web/entrypoint.sh ./web/entrypoint.sh
 COPY --chown=nextjs:nodejs ./packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
 RUN chmod +x ./web/entrypoint.sh
-
-USER nextjs
 
 # Default port to 3000
 ENV PORT 3000

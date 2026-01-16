@@ -60,12 +60,6 @@ ENV BUILD_ID=$NEXT_PUBLIC_BUILD_ID
 ENV NODE_ENV production
 ENV DOCKER_BUILD 0
 
-# Don't run production as root
-ARG UID=1001
-ARG GID=1001
-RUN addgroup --system --gid ${GID} expressjs
-RUN adduser --system --uid ${UID} expressjs
-USER expressjs
 COPY --from=builder --chown=expressjs:expressjs /app .
 COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
 RUN chmod +x ./worker/entrypoint.sh
