@@ -1,11 +1,13 @@
-FROM --platform=${TARGETPLATFORM:-linux/amd64} node:24-alpine AS alpine
+# The node alpine image is available here: https://github.com/nodejs/docker-node
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24-dev AS alpine
 
+USER root
 # It's important to update the index before installing packages to ensure you're getting the latest versions.
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk update && apk upgrade --no-cache libcrypto3 libssl3 libc6-compat busybox ssl_client
+RUN apk update && apk upgrade --no-cache libcrypto3 libssl3 busybox ssl_client && apk add --no-cache dumb-init
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine AS base
-RUN npm install turbo@2.6.3 --global
+RUN npm install turbo@^2.7.2 --global
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
@@ -25,11 +27,15 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS builder
 
 WORKDIR /app
 
+# Disable FIPS mode for build (pnpm uses non-FIPS-compliant hashes internally)
+ENV OPENSSL_CONF=""
+
 # First install the dependencies (as they change less often)
 COPY --from=pruner /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=pruner /app/out/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=pruner /app/out/json/ .
 
+USER root
 RUN pnpm install --frozen-lockfile
 
 # pass public variables in build step
@@ -44,12 +50,14 @@ COPY --from=pruner /app/out/full/ .
 
 RUN turbo run build --filter=worker...
 
-FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS runner
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24 AS runner
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
-RUN apk add --no-cache dumb-init
+USER root
+
+COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
 
 WORKDIR /app
 
@@ -59,14 +67,10 @@ ENV BUILD_ID=$NEXT_PUBLIC_BUILD_ID
 ENV NODE_ENV production
 ENV DOCKER_BUILD 0
 
-# Don't run production as root
-ARG UID=1001
-ARG GID=1001
-RUN addgroup --system --gid ${GID} expressjs
-RUN adduser --system --uid ${UID} expressjs
-USER expressjs
-COPY --from=builder --chown=expressjs:expressjs /app .
-RUN chmod +x ./worker/entrypoint.sh
+COPY --from=builder /app .
+RUN chmod +x ./worker/entrypoint.sh && chown -R node:node /app
+
+USER node
 
 EXPOSE 3030
 ENV PORT=3030

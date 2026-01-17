@@ -1,11 +1,13 @@
-FROM --platform=${TARGETPLATFORM:-linux/amd64} node:24-alpine AS alpine
+# The node alpine image is available here: https://github.com/nodejs/docker-node
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24-dev AS alpine
 
+USER root
 # It's important to update the index before installing packages to ensure you're getting the latest versions.
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk update && apk upgrade --no-cache libcrypto3 libssl3 libc6-compat busybox ssl_client
+RUN apk update && apk upgrade --no-cache libcrypto3 libssl3 busybox ssl_client && apk add --no-cache tzdata dumb-init wget
 
 FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine AS base
-RUN npm install turbo@2.6.3 --global
+RUN npm install turbo@^2.7.2 --global
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
@@ -22,11 +24,15 @@ FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS builder
 
 WORKDIR /app
 
+# Disable FIPS mode for build (pnpm uses non-FIPS-compliant hashes internally)
+ENV OPENSSL_CONF=""
+
 # First install the dependencies (as they change less often)
 COPY --from=pruner /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=pruner /app/out/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=pruner /app/out/json/ .
 
+USER root
 RUN pnpm install --frozen-lockfile
 
 ENV DOCKER_BUILD 1
@@ -85,11 +91,19 @@ ENV CI true
 
 RUN NODE_OPTIONS='--max-old-space-size-percentage=75' turbo run build --filter=web...
 
+# Download migrate binary
+ARG TARGETPLATFORM
+RUN MIGRATE_TARGET_ARCH=$(echo ${TARGETPLATFORM:-linux/amd64} | sed 's/\//-/g') && \
+    wget -q -O- https://github.com/golang-migrate/migrate/releases/download/v4.19.1/migrate.$MIGRATE_TARGET_ARCH.tar.gz | tar xvz && \
+    mv migrate /usr/bin/migrate
+
 # Production image, copy all the files and run next
-FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS runner
+FROM --platform=${TARGETPLATFORM:-linux/amd64} nexus.int.onebrief.tools/cgr.dev/onebrief.com/node-fips:24 AS runner
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
+
+USER root
 
 WORKDIR /app
 
@@ -106,13 +120,8 @@ ENV DOCKER_BUILD 0
 # Set NEXT_MANUAL_SIG_HANDLE for runtime
 ENV NEXT_MANUAL_SIG_HANDLE true
 
-RUN apk add --no-cache dumb-init tzdata
-
-# Don't run production as root
-ARG UID=1001
-ARG GID=1001
-RUN addgroup --system --gid ${GID} nodejs
-RUN adduser --system --uid ${UID} nextjs
+COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
+COPY --from=alpine /usr/share/zoneinfo /usr/share/zoneinfo
 
 RUN npm install -g --no-package-lock --no-save prisma@6.17.1
 
@@ -122,27 +131,25 @@ RUN if [ -n "$NEXT_PUBLIC_LANGFUSE_CLOUD_REGION" ]; then \
     npm install --no-package-lock --no-save dd-trace@5.65.0; \
     fi
 
-RUN MIGRATE_TARGET_ARCH=$(echo ${TARGETPLATFORM:-linux/amd64} | sed 's/\//-/g') && \
-    wget -q -O- https://github.com/golang-migrate/migrate/releases/download/v4.19.0/migrate.$MIGRATE_TARGET_ARCH.tar.gz | tar xvz && \
-    mv migrate /usr/bin/migrate
+COPY --from=builder /usr/bin/migrate /usr/bin/migrate
 
-COPY --from=builder --chown=nextjs:nodejs /app/web/next.config.mjs .
-COPY --from=builder --chown=nextjs:nodejs /app/web/package.json .
+COPY --from=builder /app/web/next.config.mjs .
+COPY --from=builder /app/web/package.json .
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder --chown=nextjs:nodejs /app/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./web/.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/web/public ./web/public
+COPY --from=builder /app/web/.next/standalone ./
+COPY --from=builder /app/web/.next/static ./web/.next/static
+COPY --from=builder /app/web/public ./web/public
 
-COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/prisma ./packages/shared/prisma
-COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/clickhouse ./packages/shared/clickhouse
-COPY --from=builder --chown=nextjs:nodejs /app/packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
+COPY --from=builder /app/packages/shared/prisma ./packages/shared/prisma
+COPY --from=builder /app/packages/shared/clickhouse ./packages/shared/clickhouse
+COPY --from=builder /app/packages/shared/scripts/cleanup.sql ./packages/shared/scripts/cleanup.sql
 
-COPY --from=builder --chown=nextjs:nodejs /app/web/entrypoint.sh ./web/entrypoint.sh
-RUN chmod +x ./web/entrypoint.sh
+COPY --from=builder /app/web/entrypoint.sh ./web/entrypoint.sh
+RUN chmod +x ./web/entrypoint.sh && chown -R node:node /app
 
-USER nextjs
+USER node
 
 # Default port to 3000
 ENV PORT 3000
