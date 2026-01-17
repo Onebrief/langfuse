@@ -5,7 +5,7 @@
 # External connections from other machines will not be able to reach these services directly.
 services:
   langfuse-worker:
-    image: nexus.int.onebrief.tools/onebrief/langfuse-ob-worker:chore-sync-fork
+    image: nexus.int.onebrief.tools/onebrief/langfuse-ob-worker:3.147.0
     platform: linux/amd64
     restart: always
     depends_on: &langfuse-depends-on
@@ -68,7 +68,7 @@ services:
       SMTP_CONNECTION_URL: ${SMTP_CONNECTION_URL:-}
 
   langfuse-web:
-    image: nexus.int.onebrief.tools/onebrief/langfuse-ob-web:chore-sync-fork
+    image: nexus.int.onebrief.tools/onebrief/langfuse-ob-web:3.147.0
     platform: linux/amd64
     restart: always
     depends_on: *langfuse-depends-on
