@@ -73,7 +73,6 @@ jobs:
         with:
           path: /var/lib/docker
           volume_size: 128
-          volume_initialization_rate: 300
       - name: clear old images
         run: docker image prune -f
       - name: Harden Runner
