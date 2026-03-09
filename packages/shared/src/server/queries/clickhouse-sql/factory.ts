@@ -25,6 +25,9 @@ export class QueryBuilderError extends Error {
   }
 }
 
+// Matches nullIf(expr, '') wrappers used in dimension SQL for display purposes.
+const NULL_IF_EMPTY_RE = /^nullIf\((.+),\s*''\)$/;
+
 // This function ensures that the user only selects valid columns from the clickhouse schema.
 // The filter property in this column needs to be zod verified.
 // User input for values (e.g. project_id = <value>) are sent to Clickhouse as parameters to prevent SQL injection
@@ -32,7 +35,11 @@ export const createFilterFromFilterState = (
   filter: FilterCondition[],
   columnMapping: UiColumnMappings,
 ) => {
-  return filter.map((frontEndFilter) => {
+  const applicableFilters = filter.filter(
+    (frontEndFilter) => frontEndFilter.type !== "positionInTrace",
+  );
+
+  return applicableFilters.map((frontEndFilter) => {
     // checks if the column exists in the clickhouse schema
     const column = matchAndVerifyTracesUiColumn(frontEndFilter, columnMapping);
 
@@ -114,6 +121,32 @@ export const createFilterFromFilterState = (
           tablePrefix: column.queryPrefix,
         });
       case "null":
+        // Events_* table uses empty string instead of NULL for parent_span_id
+        if (
+          frontEndFilter.column === "parentObservationId" &&
+          column.clickhouseTableName.startsWith("events")
+        ) {
+          const isNull = frontEndFilter.operator === "is null";
+          // When the dimension SQL wraps the column with nullIf(col, ''), the value
+          // is already NULL for empty strings — use a standard IS NULL / IS NOT NULL check.
+          // When there is no nullIf wrapper, the column stores '' directly — use = '' / != ''.
+          const hasNullIf = NULL_IF_EMPTY_RE.test(column.clickhouseSelect);
+          const fieldWithPrefix = column.queryPrefix
+            ? `${column.queryPrefix}.${column.clickhouseSelect}`
+            : column.clickhouseSelect;
+          const query = hasNullIf
+            ? `${fieldWithPrefix} IS ${isNull ? "" : "NOT "}NULL`
+            : `${fieldWithPrefix} ${isNull ? "=" : "!="} ''`;
+
+          return {
+            clickhouseTable: column.clickhouseTableName,
+            field: column.clickhouseSelect,
+            operator: isNull ? ("=" as const) : ("!=" as const),
+            tablePrefix: column.queryPrefix,
+            apply: () => ({ query, params: {} }),
+          };
+        }
+
         return new NullFilter({
           clickhouseTable: column.clickhouseTableName,
           field: column.clickhouseSelect,
@@ -140,9 +173,15 @@ const matchAndVerifyTracesUiColumn = (
   );
 
   if (!uiTable) {
-    throw new QueryBuilderError(
-      `Column ${filter.column} does not match a UI / CH table mapping.`,
-    );
+    const errorMessage = `Column ${filter.column} does not match a UI / CH table mapping.`;
+    logger.error(errorMessage, {
+      filterColumn: filter.column,
+      filterType: filter.type,
+      availableColumns: uiTableDefinitions.map(
+        (col) => col.uiTableId ?? col.uiTableName,
+      ),
+    });
+    throw new QueryBuilderError(errorMessage);
   }
 
   if (!isValidTableName(uiTable.clickhouseTableName)) {

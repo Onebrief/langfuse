@@ -26,7 +26,7 @@ describe("applyFieldMapping", () => {
     metadata: {
       user_id: "user-123",
       session_id: "session-456",
-      tags: ["math", "simple"],
+      tags: ["math", "simple", "hello"],
     },
   };
 
@@ -74,6 +74,11 @@ describe("applyFieldMapping", () => {
   });
 
   describe("evaluateJsonPath", () => {
+    it("should return the full object if on root '$' and object is string", () => {
+      const result = evaluateJsonPath("Hello", "$");
+      expect(result).toBe("Hello");
+    });
+
     it("should extract nested values using JSON path", () => {
       expect(
         evaluateJsonPath(sampleObservation.input, "$.messages[0].content"),
@@ -125,6 +130,9 @@ describe("applyFieldMapping", () => {
       expect(evaluateJsonPath(sampleObservation.metadata, "$.tags[1]")).toBe(
         "simple",
       );
+      expect(
+        evaluateJsonPath(sampleObservation.metadata, "$.tags[1:]"),
+      ).toEqual(["simple", "hello"]);
     });
   });
 
@@ -676,6 +684,7 @@ describe("applyFieldMapping", () => {
         input: { prompt: "What is 2+2?" },
         expectedOutput: "4",
         metadata: null,
+        errors: [],
       });
     });
 
@@ -693,6 +702,7 @@ describe("applyFieldMapping", () => {
         input: sampleObservation.input,
         expectedOutput: sampleObservation.output,
         metadata: sampleObservation.metadata,
+        errors: [],
       });
     });
 
@@ -754,7 +764,146 @@ describe("applyFieldMapping", () => {
         },
         expectedOutput: "4",
         metadata: null,
+        errors: [],
       });
+    });
+
+    it("should collect json_path_miss errors for non-matching root paths", () => {
+      const result = applyFullMapping({
+        observation: sampleObservation,
+        mapping: {
+          input: {
+            mode: "custom",
+            custom: {
+              type: "root",
+              rootConfig: {
+                sourceField: "input",
+                jsonPath: "$.nonExistent.deeply.nested",
+              },
+            },
+          },
+          expectedOutput: { mode: "full" },
+          metadata: { mode: "none" },
+        },
+      });
+
+      expect(result.input).toBeUndefined();
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toMatchObject({
+        type: "json_path_miss",
+        targetField: "input",
+        sourceField: "input",
+        jsonPath: "$.nonExistent.deeply.nested",
+        mappingKey: null,
+      });
+      expect(result.errors[0].message).toContain("did not match");
+    });
+
+    it("should collect json_path_miss errors for non-matching keyValueMap paths", () => {
+      const result = applyFullMapping({
+        observation: sampleObservation,
+        mapping: {
+          input: {
+            mode: "custom",
+            custom: {
+              type: "keyValueMap",
+              keyValueMapConfig: {
+                entries: [
+                  {
+                    id: "1",
+                    key: "prompt",
+                    sourceField: "input",
+                    value: "$.messages[1].content", // matches
+                  },
+                  {
+                    id: "2",
+                    key: "missing",
+                    sourceField: "output",
+                    value: "$.nonExistent", // does not match
+                  },
+                ],
+              },
+            },
+          },
+          expectedOutput: { mode: "full" },
+          metadata: { mode: "none" },
+        },
+      });
+
+      expect(result.input).toEqual({
+        prompt: "What is 2+2?",
+        missing: undefined,
+      });
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toMatchObject({
+        type: "json_path_miss",
+        targetField: "input",
+        sourceField: "output",
+        jsonPath: "$.nonExistent",
+        mappingKey: "missing",
+      });
+    });
+
+    it("should collect errors across multiple fields", () => {
+      const result = applyFullMapping({
+        observation: sampleObservation,
+        mapping: {
+          input: {
+            mode: "custom",
+            custom: {
+              type: "root",
+              rootConfig: {
+                sourceField: "input",
+                jsonPath: "$.nope",
+              },
+            },
+          },
+          expectedOutput: {
+            mode: "custom",
+            custom: {
+              type: "root",
+              rootConfig: {
+                sourceField: "output",
+                jsonPath: "$.alsoNope",
+              },
+            },
+          },
+          metadata: { mode: "none" },
+        },
+      });
+
+      expect(result.errors).toHaveLength(2);
+      expect(result.errors[0].targetField).toBe("input");
+      expect(result.errors[1].targetField).toBe("expectedOutput");
+    });
+
+    it("should not collect errors for literal string values in keyValueMap", () => {
+      const result = applyFullMapping({
+        observation: sampleObservation,
+        mapping: {
+          input: {
+            mode: "custom",
+            custom: {
+              type: "keyValueMap",
+              keyValueMapConfig: {
+                entries: [
+                  {
+                    id: "1",
+                    key: "type",
+                    sourceField: "input",
+                    value: "conversation", // literal, not JSON path
+                  },
+                ],
+              },
+            },
+          },
+          expectedOutput: { mode: "full" },
+          metadata: { mode: "none" },
+        },
+      });
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.input).toEqual({ type: "conversation" });
     });
   });
 

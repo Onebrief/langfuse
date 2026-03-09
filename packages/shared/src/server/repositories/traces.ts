@@ -34,6 +34,9 @@ import { recordDistribution } from "../instrumentation";
 import type { AnalyticsTraceEvent } from "../analytics-integrations/types";
 import { measureAndReturn } from "../clickhouse/measureAndReturn";
 import { DEFAULT_RENDERING_PROPS, RenderingProps } from "../utils/rendering";
+import { logger } from "../logger";
+import { traceException } from "../instrumentation";
+import { prisma } from "../../db";
 
 /**
  * Checks if trace exists in clickhouse.
@@ -104,6 +107,9 @@ export const checkTraceExistsAndGetTimestamp = async ({
         countIf(level = 'WARNING') as warning_count,
         countIf(level = 'DEFAULT') as default_count,
         countIf(level = 'DEBUG') as debug_count,
+        date_diff('millisecond', least(min(start_time), min(end_time)), greatest(max(start_time), max(end_time))) as latency_milliseconds,
+        sumMap(usage_details) as usage_details,
+        sumMap(cost_details) as cost_details,
         trace_id,
         project_id
       FROM observations o FINAL
@@ -310,7 +316,24 @@ export const getTracesBySessionId = async (
 };
 
 export const hasAnyTrace = async (projectId: string) => {
-  return measureAndReturn({
+  // Check PostgreSQL flag first — once set, it's never reverted
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { hasTraces: true },
+    });
+    if (project?.hasTraces) {
+      return true;
+    }
+  } catch (error) {
+    traceException(error);
+    logger.error("Failed to read hasTraces flag from PostgreSQL", {
+      projectId,
+      error,
+    });
+  }
+
+  const result = await measureAndReturn({
     operationName: "hasAnyTrace",
     projectId,
     input: {
@@ -337,11 +360,33 @@ export const hasAnyTrace = async (projectId: string) => {
           projectId: input.projectId,
         },
         tags: input.tags,
+        clickhouseSettings: {
+          max_threads: 1,
+        },
       });
 
       return rows.length > 0;
     },
   });
+
+  // Persist positive result in PostgreSQL — once a project has traces, it stays true
+  // Only update if not already set to avoid unnecessary writes
+  if (result) {
+    try {
+      await prisma.project.updateMany({
+        where: { id: projectId, hasTraces: false },
+        data: { hasTraces: true },
+      });
+    } catch (error) {
+      traceException(error);
+      logger.error("Failed to persist hasTraces flag to PostgreSQL", {
+        projectId,
+        error,
+      });
+    }
+  }
+
+  return result;
 };
 
 export const getTraceCountsByProjectInCreationInterval = async ({
@@ -880,14 +925,48 @@ export const deleteTraces = async (projectId: string, traceIds: string[]) => {
       },
     },
     fn: async (input) => {
-      const query = `
-        DELETE FROM traces
-        WHERE project_id = {projectId: String}
-        AND id IN ({traceIds: Array(String)});
-      `;
-      await commandClickhouse({
-        query: query,
+      // Pre-flight query with time bounds computed
+      const preflight = await queryClickhouse<{
+        min_ts: string;
+        max_ts: string;
+        cnt: string;
+      }>({
+        query: `
+          SELECT
+            min(timestamp) - INTERVAL 1 HOUR as min_ts,
+            max(timestamp) + INTERVAL 1 HOUR as max_ts,
+            count(*) as cnt
+          FROM traces
+          WHERE project_id = {projectId: String} AND id IN ({traceIds: Array(String)})
+        `,
         params: input.params,
+        clickhouseConfigs: {
+          request_timeout: env.LANGFUSE_CLICKHOUSE_DELETION_TIMEOUT_MS,
+        },
+        tags: { ...input.tags, kind: "delete-preflight" },
+      });
+
+      const count = Number(preflight[0]?.cnt ?? 0);
+      if (count === 0) {
+        logger.info(
+          `deleteTraces: no rows found for project ${projectId}, skipping DELETE`,
+        );
+        return;
+      }
+
+      await commandClickhouse({
+        query: `
+          DELETE FROM traces
+          WHERE project_id = {projectId: String}
+          AND id IN ({traceIds: Array(String)})
+          AND timestamp >= {minTs: String}::DateTime64(3)
+          AND timestamp <= {maxTs: String}::DateTime64(3)
+        `,
+        params: {
+          ...input.params,
+          minTs: preflight[0].min_ts,
+          maxTs: preflight[0].max_ts,
+        },
         clickhouseConfigs: {
           request_timeout: env.LANGFUSE_CLICKHOUSE_DELETION_TIMEOUT_MS,
         },
@@ -1299,6 +1378,7 @@ export const getTracesForBlobStorageExport = function (
 
 export const getTracesForAnalyticsIntegrations = async function* (
   projectId: string,
+  projectName: string,
   minTimestamp: Date,
   maxTimestamp: Date,
 ) {
@@ -1377,6 +1457,7 @@ export const getTracesForAnalyticsIntegrations = async function* (
       langfuse_count_observations: record.observation_count,
       langfuse_session_id: record.session_id,
       langfuse_project_id: projectId,
+      langfuse_project_name: projectName,
       langfuse_user_id: record.user_id || null,
       langfuse_latency: record.latency,
       langfuse_release: record.release,
