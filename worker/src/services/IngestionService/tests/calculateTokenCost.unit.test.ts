@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Price } from "@langfuse/shared";
 import { prisma } from "@langfuse/shared/src/db";
+import { createOrgProjectAndApiKey } from "@langfuse/shared/src/server";
 
-import { pruneDatabase } from "../../../__tests__/utils";
 import { IngestionService } from "../../IngestionService";
 import * as clickhouseWriteExports from "../../ClickhouseWriter";
 
@@ -38,23 +38,20 @@ const mockIngestionService = new IngestionService(
 );
 
 describe("Token Cost Calculation", () => {
-  const modelName = "gpt-test-" + uuidv4();
-  const matchPattern = `(?i)^(${modelName})$`;
-  const traceId = uuidv4();
-  const generationId = uuidv4();
-  const projectId = "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a";
-
-  const modelId = uuidv4();
-  const tokenModelData = {
-    id: modelId,
-    modelName,
-    matchPattern,
-    tokenizerId: "openai",
+  let modelName: string;
+  let modelId: string;
+  let generationId: string;
+  let projectId: string;
+  let tokenModelData: {
+    id: string;
+    modelName: string;
+    matchPattern: string;
+    tokenizerId: string;
     tokenizerConfig: {
-      tokensPerName: 1,
-      tokenizerModel: "gpt-4o",
-      tokensPerMessage: 3,
-    },
+      tokensPerName: number;
+      tokenizerModel: string;
+      tokensPerMessage: number;
+    };
   };
 
   const modelPrices: Pick<Price, "price" | "usageType">[] = [
@@ -73,7 +70,23 @@ describe("Token Cost Calculation", () => {
   ];
 
   beforeEach(async () => {
-    await pruneDatabase();
+    modelName = `gpt-test-${uuidv4()}`;
+    modelId = uuidv4();
+    generationId = uuidv4();
+    ({ projectId } = await createOrgProjectAndApiKey());
+    const matchPattern = `(?i)^(${modelName})$`;
+    tokenModelData = {
+      id: modelId,
+      modelName,
+      matchPattern,
+      tokenizerId: "openai",
+      tokenizerConfig: {
+        tokensPerName: 1,
+        tokenizerModel: "gpt-4o",
+        tokensPerMessage: 3,
+      },
+    };
+
     const model = await prisma.model.create({
       data: tokenModelData,
     });
@@ -1296,7 +1309,11 @@ describe("Token Cost Calculation", () => {
         },
       ];
 
-      await (mockIngestionService as any).writeEvent(events[0], "testfile.txt");
+      const eventRecord = await (mockIngestionService as any).createEventRecord(
+        events[0],
+        "testfile.txt",
+      );
+      (mockIngestionService as any).writeEventRecord(eventRecord);
 
       expect(mockAddToClickhouseWriter).toHaveBeenCalled();
       const args = mockAddToClickhouseWriter.mock.calls[0];
@@ -1329,7 +1346,11 @@ describe("Token Cost Calculation", () => {
         },
       ];
 
-      await (mockIngestionService as any).writeEvent(events[0], "testfile.txt");
+      const eventRecord = await (mockIngestionService as any).createEventRecord(
+        events[0],
+        "testfile.txt",
+      );
+      (mockIngestionService as any).writeEventRecord(eventRecord);
 
       // Invalid values should be ignored
       expect(mockAddToClickhouseWriter).toHaveBeenCalled();

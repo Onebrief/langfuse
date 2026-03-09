@@ -48,6 +48,8 @@ const reportToHeader = {
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+  // Allow building to alternate directory for parallel build checks while dev server runs
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   staticPageGenerationTimeout: 500, // default is 60. Required for build process for amd
   transpilePackages: ["@langfuse/shared", "vis-network/standalone"],
   reactStrictMode: true,
@@ -65,12 +67,6 @@ const nextConfig = {
   turbopack: {
     resolveAlias: {
       "@langfuse/shared": "./packages/shared/src",
-      // this is an ugly hack to get turbopack to work with react-resizable, used in the
-      // web/src/features/widgets/components/DashboardGrid.tsx file. This **only** affects
-      // the dev server. The CSS is included in the non-turbopack based prod build anyways.
-      // Also not needed for the non-turbopack based dev server.
-      "react-resizable/css/styles.css":
-        "../node_modules/.pnpm/react-resizable@3.0.5_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/react-resizable/css/styles.css",
     },
   },
   experimental: {

@@ -969,6 +969,7 @@ export const getObservationsGroupedByModelId = async (
 export const getObservationsGroupedByName = async (
   projectId: string,
   filter: FilterState,
+  type: ObservationType | null = "GENERATION",
 ) => {
   const observationsFilter = new FilterList([
     new StringFilter({
@@ -995,7 +996,7 @@ export const getObservationsGroupedByName = async (
     SELECT o.name as name
     FROM observations o
     WHERE ${appliedObservationsFilter.query}
-    AND o.type = 'GENERATION'
+    ${type ? `AND o.type = {type: String}` : ""}
     GROUP BY o.name
     ORDER BY count() DESC
     LIMIT 1000;
@@ -1005,6 +1006,7 @@ export const getObservationsGroupedByName = async (
     query,
     params: {
       ...appliedObservationsFilter.params,
+      ...(type ? { type } : {}),
     },
     tags: {
       feature: "tracing",
@@ -1226,16 +1228,52 @@ export const deleteObservationsByTraceIds = async (
   projectId: string,
   traceIds: string[],
 ) => {
-  const query = `
-    DELETE FROM observations
-    WHERE project_id = {projectId: String}
-    AND trace_id IN ({traceIds: Array(String)});
-  `;
+  const preflight = await queryClickhouse<{
+    min_ts: string;
+    max_ts: string;
+    cnt: string;
+  }>({
+    query: `
+      SELECT
+        min(start_time) - INTERVAL 1 HOUR as min_ts,
+        max(start_time) + INTERVAL 1 HOUR as max_ts,
+        count(*) as cnt
+      FROM observations
+      WHERE project_id = {projectId: String} AND trace_id IN ({traceIds: Array(String)})
+    `,
+    params: { projectId, traceIds },
+    clickhouseConfigs: {
+      request_timeout: env.LANGFUSE_CLICKHOUSE_DELETION_TIMEOUT_MS,
+    },
+    tags: {
+      feature: "tracing",
+      type: "observation",
+      kind: "delete-preflight",
+      projectId,
+    },
+  });
+
+  const count = Number(preflight[0]?.cnt ?? 0);
+  if (count === 0) {
+    logger.info(
+      `deleteObservationsByTraceIds: no rows found for project ${projectId}, skipping DELETE`,
+    );
+    return;
+  }
+
   await commandClickhouse({
-    query: query,
+    query: `
+      DELETE FROM observations
+      WHERE project_id = {projectId: String}
+      AND trace_id IN ({traceIds: Array(String)})
+      AND start_time >= {minTs: String}::DateTime64(3)
+      AND start_time <= {maxTs: String}::DateTime64(3)
+    `,
     params: {
       projectId,
       traceIds,
+      minTs: preflight[0].min_ts,
+      maxTs: preflight[0].max_ts,
     },
     clickhouseConfigs: {
       request_timeout: env.LANGFUSE_CLICKHOUSE_DELETION_TIMEOUT_MS,
@@ -1784,6 +1822,7 @@ export const getObservationsForBlobStorageExport = function (
 
 export const getGenerationsForAnalyticsIntegrations = async function* (
   projectId: string,
+  projectName: string,
   minTimestamp: Date,
   maxTimestamp: Date,
 ) {
@@ -1864,6 +1903,7 @@ export const getGenerationsForAnalyticsIntegrations = async function* (
       langfuse_total_units: record.total_tokens,
       langfuse_session_id: record.trace_session_id,
       langfuse_project_id: projectId,
+      langfuse_project_name: projectName,
       langfuse_user_id: record.trace_user_id || null,
       langfuse_latency: record.latency,
       langfuse_time_to_first_token: record.time_to_first_token,
