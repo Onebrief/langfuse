@@ -24,6 +24,7 @@ export class DataRetentionQueue {
       ? new Queue(QueueName.DataRetentionQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.DataRetentionQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

@@ -29,6 +29,7 @@ export class CoreDataS3ExportQueue {
       ? new Queue(QueueName.CoreDataS3ExportQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.CoreDataS3ExportQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

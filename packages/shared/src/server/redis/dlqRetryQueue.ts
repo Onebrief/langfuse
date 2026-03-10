@@ -24,6 +24,7 @@ export class DeadLetterRetryQueue {
       ? new Queue(QueueName.DeadLetterRetryQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.DeadLetterRetryQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

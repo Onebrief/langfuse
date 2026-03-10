@@ -24,6 +24,7 @@ export class EventPropagationQueue {
       ? new Queue(QueueName.EventPropagationQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.EventPropagationQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

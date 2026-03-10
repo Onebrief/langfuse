@@ -29,6 +29,7 @@ export class CloudUsageMeteringQueue {
       ? new Queue(QueueName.CloudUsageMeteringQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.CloudUsageMeteringQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

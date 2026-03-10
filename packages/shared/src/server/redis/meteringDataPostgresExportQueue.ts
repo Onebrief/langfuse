@@ -29,6 +29,7 @@ export class MeteringDataPostgresExportQueue {
       ? new Queue(QueueName.MeteringDataPostgresExportQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.MeteringDataPostgresExportQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,
