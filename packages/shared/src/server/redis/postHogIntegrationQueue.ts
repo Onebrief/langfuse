@@ -26,6 +26,7 @@ export class PostHogIntegrationQueue {
       ? new Queue(QueueName.PostHogIntegrationQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.PostHogIntegrationQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

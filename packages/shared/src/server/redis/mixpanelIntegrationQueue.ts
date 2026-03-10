@@ -26,6 +26,7 @@ export class MixpanelIntegrationQueue {
       ? new Queue(QueueName.MixpanelIntegrationQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.MixpanelIntegrationQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

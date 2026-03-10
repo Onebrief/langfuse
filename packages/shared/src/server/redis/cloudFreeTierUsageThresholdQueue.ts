@@ -30,6 +30,7 @@ export class CloudFreeTierUsageThresholdQueue {
       ? new Queue(QueueName.CloudFreeTierUsageThresholdQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.CloudFreeTierUsageThresholdQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,

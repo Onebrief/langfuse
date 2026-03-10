@@ -53,7 +53,7 @@ interface ProjectWorkload {
  * Hash projectId to a short key for ClickHouse parameter names.
  */
 function toParamKey(projectId: string): string {
-  return createHash("md5").update(projectId).digest("hex").slice(0, 8);
+  return createHash("sha256").update(projectId).digest("hex").slice(0, 8);
 }
 
 /**

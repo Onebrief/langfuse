@@ -24,6 +24,7 @@ export class BlobStorageIntegrationQueue {
       ? new Queue(QueueName.BlobStorageIntegrationQueue, {
           connection: newRedis,
           prefix: getQueuePrefix(QueueName.BlobStorageIntegrationQueue),
+          settings: { repeatKeyHashAlgorithm: "sha256" },
           defaultJobOptions: {
             removeOnComplete: true,
             removeOnFail: 100,
