@@ -8,18 +8,22 @@ on:
 jobs:
   docker-web:
     name: Docker Web
-    uses: ./.github/workflows/reusable-docker-build.yml
+    uses: Onebrief/actions/.github/workflows/reusable-docker-build.yml@main
     secrets: inherit
     with:
-      image-name: onebrief/langfuse-ob-web
+      repository: onebrief/langfuse-ob-web
       dockerfile: web/Dockerfile
       context: .
+      # Only build for amd64
+      platforms: '[{"arch":"amd64","runner":"stepsecurity-x64"}]'
 
   docker-worker:
     name: Docker Worker  
-    uses: ./.github/workflows/reusable-docker-build.yml
+    uses: Onebrief/actions/.github/workflows/reusable-docker-build.yml@main
     secrets: inherit
     with:
-      image-name: onebrief/langfuse-ob-worker
+      repository: onebrief/langfuse-ob-worker
       dockerfile: worker/Dockerfile
       context: .
+      # Only build for amd64
+      platforms: '[{"arch":"amd64","runner":"stepsecurity-x64"}]'
